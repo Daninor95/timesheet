@@ -327,6 +327,7 @@
             text-align: center;
             color: var(--text-light);
             margin-bottom: 2rem;
+            font-size: 0.875rem;
         }
 
         .manager-view {
@@ -382,7 +383,7 @@
     <div id="loginScreen" class="login-screen">
         <div class="login-card">
             <h1 class="login-title">⏱️ Timesheet</h1>
-            <p class="login-subtitle">Enter your name to continue</p>
+            <p class="login-subtitle">Track your work hours</p>
             
             <form id="loginForm">
                 <div class="form-group">
@@ -415,8 +416,8 @@
                 👔 <strong>Manager View:</strong> You can see all employees' data
             </div>
 
-            <div class="alert alert-warning" id="storageWarning">
-                📱 <strong>Note:</strong> Data is stored on this device only. To share data across all employees, you'll need to set up a shared solution.
+            <div class="alert alert-info" id="infoAlert">
+                📱 <strong>Tip:</strong> Bookmark this page on your phone for quick access. Your data is saved automatically.
             </div>
 
             <!-- Summary Card -->
@@ -502,24 +503,101 @@
         let allEntries = [];
         let currentFilter = 'all';
 
-        const MANAGER_PASSWORD = 'manager123'; // Change this to your preferred password
-        const STORAGE_KEY = 'timesheet_data';
+        const MANAGER_PASSWORD = 'manager123'; // CHANGE THIS PASSWORD!
+        const STORAGE_PREFIX = 'timesheet_user_';
+        const MANAGER_STORAGE_KEY = 'timesheet_all_users';
 
-        // Load all entries from localStorage
+        // Get storage key for current user
+        function getUserStorageKey() {
+            if (isManager) {
+                return MANAGER_STORAGE_KEY;
+            }
+            // Create a simple hash of the username for the key
+            return STORAGE_PREFIX + currentUser.toLowerCase().replace(/\s+/g, '_');
+        }
+
+        // Load entries - employees load only their own, manager loads everyone's
         function loadEntries() {
             try {
-                const data = localStorage.getItem(STORAGE_KEY);
-                allEntries = data ? JSON.parse(data) : [];
+                if (isManager) {
+                    // Manager loads all users' data
+                    allEntries = [];
+                    const allKeys = Object.keys(localStorage);
+                    
+                    // Load from all user keys
+                    allKeys.forEach(key => {
+                        if (key.startsWith(STORAGE_PREFIX)) {
+                            try {
+                                const userData = JSON.parse(localStorage.getItem(key));
+                                if (Array.isArray(userData)) {
+                                    allEntries = allEntries.concat(userData);
+                                }
+                            } catch (e) {
+                                console.error('Error loading user data:', e);
+                            }
+                        }
+                    });
+                    
+                    // Also load from manager storage (for backward compatibility)
+                    const managerData = localStorage.getItem(MANAGER_STORAGE_KEY);
+                    if (managerData) {
+                        const entries = JSON.parse(managerData);
+                        if (Array.isArray(entries)) {
+                            allEntries = allEntries.concat(entries);
+                        }
+                    }
+                    
+                    // Remove duplicates based on timestamp
+                    const seen = new Set();
+                    allEntries = allEntries.filter(entry => {
+                        if (seen.has(entry.timestamp)) {
+                            return false;
+                        }
+                        seen.add(entry.timestamp);
+                        return true;
+                    });
+                } else {
+                    // Employee loads only their own data
+                    const userKey = getUserStorageKey();
+                    const data = localStorage.getItem(userKey);
+                    allEntries = data ? JSON.parse(data) : [];
+                }
             } catch (error) {
                 console.error('Error loading entries:', error);
                 allEntries = [];
             }
         }
 
-        // Save all entries to localStorage
+        // Save entries - employees save only their own, manager saves to all affected users
         function saveEntries() {
             try {
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(allEntries));
+                if (isManager) {
+                    // Manager saves all data back to respective user keys
+                    const userEntries = {};
+                    
+                    // Group entries by employee name
+                    allEntries.forEach(entry => {
+                        const userName = entry.employeeName;
+                        const key = STORAGE_PREFIX + userName.toLowerCase().replace(/\s+/g, '_');
+                        if (!userEntries[key]) {
+                            userEntries[key] = [];
+                        }
+                        userEntries[key].push(entry);
+                    });
+                    
+                    // Save each user's entries to their own key
+                    Object.entries(userEntries).forEach(([key, entries]) => {
+                        localStorage.setItem(key, JSON.stringify(entries));
+                    });
+                    
+                    // Also save to manager key for backup
+                    localStorage.setItem(MANAGER_STORAGE_KEY, JSON.stringify(allEntries));
+                } else {
+                    // Employee saves only their own data
+                    const userKey = getUserStorageKey();
+                    const userEntries = allEntries.filter(e => e.employeeName === currentUser);
+                    localStorage.setItem(userKey, JSON.stringify(userEntries));
+                }
                 return true;
             } catch (error) {
                 console.error('Error saving entries:', error);
@@ -683,7 +761,7 @@
             if (isManager) {
                 document.getElementById('managerAlert').style.display = 'flex';
                 document.getElementById('entriesTitle').textContent = 'All Time Entries';
-                document.getElementById('storageWarning').style.display = 'none';
+                document.getElementById('infoAlert').style.display = 'none';
             }
             
             loadEntries();
